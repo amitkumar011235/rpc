@@ -11,6 +11,9 @@ SERVER CODE
 #include <stdio.h>
 #include <iostream>
 #include <string>
+#include <thread>
+#include <map>
+#include <sstream>
 
 // Need to link with Ws2_32.lib
 #pragma comment (lib, "Ws2_32.lib")
@@ -26,10 +29,16 @@ int sendData(SOCKET s, const char* data ,  int len, int& actualbytessent)
     int total = 0; // how many bytes we've sent till now
     int bytesleft = len; // how many we have left to send
     int n = 0;  //actual bytes sent after send() call
+
+
+    //set timeout on send
+    DWORD timeout = 1 * 1000;
+    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, (const char*)&timeout, sizeof(timeout));
+    
+
     while (total < len) {
         n = send(s, data + total, bytesleft, 0);
         if (n == -1) {
-            /* print/log error details */
             break;
         }
         total += n;
@@ -41,11 +50,15 @@ int sendData(SOCKET s, const char* data ,  int len, int& actualbytessent)
 
 int recvData(SOCKET s, char*& data, int& datalen)
 {
-    const int BUFF_SIZE = 512;
+    const int BUFF_SIZE = 65536;
     datalen = 0;
     int totalbytesrecv = 0;
     int recvbytes = 0;
-   // char recvdata[BUFF_SIZE];
+
+    //set recv timeout
+    DWORD timeout = 5 * 1000;
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
+
     char* recvdata = new char[BUFF_SIZE];
     data = recvdata;
     while (1)
@@ -69,6 +82,10 @@ int recvData(SOCKET s, char*& data, int& datalen)
             cout << "data recvd exceeded the max buffer size\n";
             return 0;
         }
+        if (recvdata[recvbytes] == '\n')
+        {
+            return 0;
+        }
     }
 
     return 0;
@@ -82,6 +99,77 @@ string convertToString(char* a, int size)
         s = s + a[i];
     }
     return s;
+}
+
+
+//separate function to run a new connection on a ssparate thread
+void Execute(SOCKET ClientSocket)
+{
+    cout << "running on a separate thread\n";
+    //recv the data from the client
+    char* data = nullptr;;
+    int datalen = 0;
+    int recvres = recvData(ClientSocket, data, datalen);
+    if (datalen > 0)
+    {
+        string strdata = convertToString(data, datalen);
+        cout << "len of data recvd : " << datalen << endl << "data recvd : \n" << strdata << endl;;
+        //need to free the memory on which data was recvd
+        delete[] data;
+    }
+
+    //send the data back to the client
+    const char* sendata = "this is the msg from server";
+    int bytessent = 0;
+    int sendres = sendData(ClientSocket, sendata, strlen(sendata), bytessent);
+    if (bytessent <= 0)
+    {
+        cout << "error occured while sending . error : " << WSAGetLastError() << endl;
+    }
+
+    // shutdown the connection since we're done
+    int iResult = shutdown(ClientSocket, SD_SEND);
+    if (iResult == SOCKET_ERROR) {
+        printf("shutdown failed with error: %d\n", WSAGetLastError());
+        closesocket(ClientSocket);
+        WSACleanup();
+        return;
+    }
+
+    // cleanup
+    closesocket(ClientSocket);
+    cout << "socket closed\n";
+}
+
+
+/*
+expection a key value pair in the "data"
+
+version:1
+len:20
+body:this is the whole body
+
+*/
+
+
+std::map<std::string, std::string> mappify1(std::string const& s)
+{
+    std::map<std::string, std::string> m;
+
+    std::string key, val;
+    std::istringstream iss(s);
+
+    while (getline(getline(iss, key, ':') >> std::ws, val))
+        m[key] = val;
+
+    return m;
+}
+
+string getDataBody(string data)
+{
+   map<string,string> m =  mappify1(data);
+
+   return m["body"];
 }
 
 int  main()
@@ -157,84 +245,9 @@ int  main()
             return 1;
         }
 
-        //recv the data from the client
-        char* data = nullptr;;
-        int datalen = 0;
-        int recvres = recvData(ClientSocket, data, datalen);
-        if (datalen > 0)
-        {
-            string strdata = convertToString(data, datalen);
-            cout << "len of data recvd : " << datalen << endl << "data recvd : \n" << strdata << endl;;
-            //need to free the memory on which data was recvd
-            delete[] data;
-        }
-
-        //send the data back to the client
-        const char* sendata = "this is the msg from server";
-        int bytessent = 0;
-        int sendres = sendData(ClientSocket, sendata, strlen(sendata), bytessent);
-        if (bytessent <= 0)
-        {
-            cout << "error occured while sending . error : " << WSAGetLastError() << endl;
-        }
-
-        // shutdown the connection since we're done
-        iResult = shutdown(ClientSocket, SD_SEND);
-        if (iResult == SOCKET_ERROR) {
-            printf("shutdown failed with error: %d\n", WSAGetLastError());
-            closesocket(ClientSocket);
-            WSACleanup();
-            return 1;
-        }
-
-        // cleanup
-        closesocket(ClientSocket);
-        cout << "socket closed\n";
-
-        // Receive until the peer shuts down the connection
-        //do {
-
-        //    iResult = recv(ClientSocket, recvbuf, recvbuflen, 0);
-        //    if (iResult > 0) {
-        //        recvbuf[iResult] = '\0';
-        //        printf("Bytes received: %d and recv buffer : %s\n", iResult,recvbuf);
-
-        //        // Echo the buffer back to the sender
-
-        //       /* iSendResult = send(ClientSocket, recvbuf, iResult, 0);*/
-        //        iSendResult = send(ClientSocket, sampleresstr, 200, 0);
-        //        
-        //        if (iSendResult == SOCKET_ERROR) {
-        //            printf("send failed with error: %d\n", WSAGetLastError());
-        //            closesocket(ClientSocket);
-        //            WSACleanup();
-        //            return 1;
-        //        }
-        //        printf("Bytes sent: %d\n", iSendResult);
-        //    }
-        //    else if (iResult == 0)
-        //        printf("Connection closing...\n");
-        //    else {
-        //        printf("recv failed with error: %d\n", WSAGetLastError());
-        //        closesocket(ClientSocket);
-        //        WSACleanup();
-        //        return 1;
-        //    }
-
-        //} while (iResult > 0);
-
-        //// shutdown the connection since we're done
-        //iResult = shutdown(ClientSocket, SD_SEND);
-        //if (iResult == SOCKET_ERROR) {
-        //    printf("shutdown failed with error: %d\n", WSAGetLastError());
-        //    closesocket(ClientSocket);
-        //    WSACleanup();
-        //    return 1;
-        //}
-
-        //// cleanup
-        //closesocket(ClientSocket);
-        //cout << "socket closed\n";
+        //send and recv on the socket on a new thread
+        thread newconnthread(Execute, ClientSocket);
+        newconnthread.detach();
     }
    
     WSACleanup();
